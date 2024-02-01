@@ -1,0 +1,75 @@
+stats_config:
+  stats_matcher:
+    reject_all: true
+static_resources:
+  listeners:
+  - name: main
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10000
+    per_connection_buffer_limit_bytes: 12582912
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          generate_request_id: false
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains:
+              - "*"
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: cluster0
+          http_filters:
+          - name: lua_filter_with_custom_name_0
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+              default_source_code:
+                inline_string: |
+                  function envoy_on_request(req)
+                    require("resty_ffi")
+                    local demo = ngx.load_ffi("ffi_go_basic_auth",
+                      '{"user":"fooname","password":"validpassword"}')
+                    local auth = req:headers():get("Authorization")
+                    local body = req:body()
+                    body = body and body:getBytes(0, body:length()) or "ok"
+                    local tbl = {auth, body}
+                    local data = table.concat(tbl, "\n")
+                    local _, rc, res = demo:auth(data, req)
+                    req:respond({[":status"] = tostring(rc)}, res)
+                  end
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: cluster0
+    circuit_breakers:
+      thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000000
+          max_pending_requests: 1000000000
+          max_requests: 1000000000
+          max_retries: 1000000000
+        - priority: HIGH
+          max_connections: 1000000000
+          max_pending_requests: 1000000000
+          max_requests: 1000000000
+          max_retries: 1000000000
+    load_assignment:
+      cluster_name: httpbin
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 8080
